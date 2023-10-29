@@ -1,0 +1,1 @@
+This program tracks mouse, keyboard and gamepad input. It runs in background and you can, as I do, play videogames with running code. I originally wrote this code(using ChatGPT) to see how many times I click my mouse while playing Baldur's Gate 3.
