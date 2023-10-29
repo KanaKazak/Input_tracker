@@ -58,7 +58,6 @@ def on_key_press(key):
             print(f"{key} key was pressed, exiting program.")
             stop_listening()
     record_input(event_type, None, None, action)
-
 def on_gamepad_input(event):
     global left_stick_last_moved, right_stick_last_moved, left_shoulder_last_moved, right_shoulder_last_moved
     if event.ev_type == "Absolute":
@@ -101,7 +100,6 @@ def on_gamepad_input(event):
         action = f"Gamepad Button: {event.code} {'pressed' if event.state == 1 else 'released'}"
         print(action)
         record_input("Gamepad Input", None, None, action)
-
 mouse_listener = MouseListener(on_click=on_mouse_click)
 keyboard_listener = KeyboardListener(on_press=on_key_press)
 mouse_listener.start()
@@ -111,7 +109,6 @@ try:
     gamepad_tracking = True  # Set the flag if a gamepad is found
 except UnpluggedError:
     print("No gamepad found. Gamepad tracking is disabled.")
-
 while is_running:
     # Check if a gamepad is found at regular intervals
     try:
@@ -125,23 +122,6 @@ while is_running:
             for event in events:
                 on_gamepad_input(event)
         except UnpluggedError:
-            print("Gamepad disconnected. Disabling gamepad tracking.")s
+            print("Gamepad disconnected. Disabling gamepad tracking.")
             gamepad_tracking = False
-#while is_running:
-    #try:
-    #events = get_gamepad()
-    #for event in events:
-        #on_gamepad_input(event)
-    #except KeyboardInterrupt:
-        #break
-    #time.sleep(input_delay)
-#while is_running:
-    #time.sleep(input_delay)
-    #try:
-        #events = get_gamepad()
-        #for event in events:
-            #on_gamepad_input(event)
-    #except KeyboardInterrupt:
-        #break
-# Close the program
 sys.exit(0)
