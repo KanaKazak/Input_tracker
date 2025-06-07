@@ -1,5 +1,4 @@
 import time
-import sys
 import sqlite3
 from pynput.mouse import Listener as MouseListener
 from pynput.keyboard import Listener as KeyboardListener
@@ -35,6 +34,8 @@ right_shoulder_last_moved = 0
 # Gamepad tracking flag
 gamepad_tracking = False
 
+# Initialize the database
+# This function sets up the SQLite database and creates the input_data table if it doesn't exist
 def setup_database():
     conn = sqlite3.connect('input_data.db')
     cursor = conn.cursor()
@@ -49,7 +50,8 @@ def setup_database():
     conn.commit()
     conn.close()
 
-
+# Record input data into the database
+# This function records input events into the database with a timestamp
 def record_input(event_type, x, y, action):
     global input_count
     input_count += 1
@@ -66,6 +68,8 @@ def record_input(event_type, x, y, action):
             conn.commit()
             print(f"Recorded: {event_type} - {detail}")
 
+# Show a summary window with the tracked input data
+# This function creates a tkinter window to display the summary of inputs tracked
 def show_summary_window():
     global start_time
     # Read values from the database
@@ -88,6 +92,10 @@ def show_summary_window():
     # Create a summary window using tkinter
     window = tk.Tk()
     window.title("Input Tracker Summary")
+    window.lift()
+    window.attributes("-topmost", True)
+    window.after_idle(window.attributes, "-topmost", False)
+
 
     # Set the window size and disable resizing
     window.geometry("400x300")  # Increased size
@@ -117,6 +125,8 @@ def show_summary_window():
     # Start the tkinter main loop
     window.mainloop()
 
+# Stop listening for inputs and show the summary window
+# This function stops the input listeners and shows a summary of the tracked inputs
 def stop_listening():
     global is_running
     is_running = False
@@ -132,14 +142,15 @@ def stop_listening():
     # Show summary before exiting
     show_summary_window()
 
-
-
+# Handle mouse click events
+# This function records mouse click events and prints the coordinates and button pressed
 def on_mouse_click(x, y, button, pressed):
     if pressed:
         record_input("mouse", x, y, f"Mouse {button} Pressed")
         print(f"Mouse clicked at ({x}, {y}) with {button}")
 
-
+# Handle keyboard key press events
+# This function records keyboard key presses and prints the key pressed
 def on_key_press(key):
     key_type = 'keyboard'
 
@@ -151,29 +162,13 @@ def on_key_press(key):
         action = f"Special Key Pressed: {detail}"
 
     print(action)
-    log_input(key_type, detail)
+    record_input(key_type, None, None, action)
 
     if key == Key.f12:
         stop_listening()
         return False  # stop the keyboard listener
     
-
-def log_input(event_type, detail):
-    global input_count
-    input_count += 1
-    current_time = time.time()
-
-    with db_lock:
-        with sqlite3.connect("input_data.db", check_same_thread=False) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO input_data (type, detail, timestamp) VALUES (?, ?, ?)",
-                (event_type, detail, current_time)
-            )
-            conn.commit()
-    print(f"Logged: {event_type} - {detail} at {current_time}")
-
-
+# Handle gamepad input
 def on_gamepad_input(event):
     #Process a single gamepad event.
     global left_stick_last_moved, right_stick_last_moved
@@ -185,42 +180,56 @@ def on_gamepad_input(event):
             if current_time - left_stick_last_moved >= cooldown_period:
                 left_stick_last_moved = current_time
                 action = f"Left Stick Moved: {event.code}"
-                record_input("Gamepad Input", None, None, action)
+                record_input("gamepad", None, None, action)
                 print(action)
         elif event.code in ("ABS_RX", "ABS_RY"):
             if current_time - right_stick_last_moved >= cooldown_period:
                 right_stick_last_moved = current_time
                 action = f"Right Stick Moved: {event.code}"
-                record_input("Gamepad Input", None, None, action)
+                record_input("gamepad", None, None, action)
                 print(action)
         elif event.code in ("ABS_Z",):
             if current_time - left_shoulder_last_moved >= cooldown_period:
                 left_shoulder_last_moved = current_time
                 action = f"Left Shoulder Moved: {event.code}"
-                record_input("Gamepad Input", None, None, action)
+                record_input("gamepad", None, None, action)
                 print(action)
         elif event.code in ("ABS_RZ",):
             if current_time - right_shoulder_last_moved >= cooldown_period:
                 right_shoulder_last_moved = current_time
                 action = f"Right Shoulder Moved: {event.code}"
-                record_input("Gamepad Input", None, None, action)
+                record_input("gamepad", None, None, action)
                 print(action)
         elif event.code in ("ABS_HAT0X", "ABS_HAT0Y"):
-            action = f"Gamepad D-pad: {event.code} {'pressed' if event.state == 1 else 'released'}"
-            record_input("Gamepad Input", None, None, action)
+            if event.code == "ABS_HAT0X":
+                direction = {
+                    -1: 'left',
+                    0: 'centered',
+                    1: 'right'
+                }.get(event.state, 'unknown')
+            else:  # ABS_HAT0Y
+                direction = {
+                    -1: 'up',
+                    0: 'centered',
+                    1: 'down'
+                }.get(event.state, 'unknown')
+            
+            action = f"Gamepad D-pad: {event.code} → {direction}"
+            record_input("gamepad", None, None, action)
             print(action)
     elif event.ev_type == "Key":
         action = f"Gamepad Button: {event.code} {'pressed' if event.state == 1 else 'released'}"
-        record_input("Gamepad Input", None, None, action)
+        record_input("gamepad", None, None, action)
         print(action)
 
-
+# Main function to set up the database and start input listeners
+# This function initializes the database, starts the mouse and keyboard listeners, and handles gamepad input
 def main():
     setup_database()
     global mouse_listener, keyboard_listener
     # Start listeners
     mouse_listener = MouseListener(on_click=on_mouse_click)
-    keyboard_listener = KeyboardListener(on_press=on_key_press)
+    keyboard_listener = KeyboardListener(on_press=on_key_press) # type: ignore
     mouse_listener.start()
     keyboard_listener.start()
 
