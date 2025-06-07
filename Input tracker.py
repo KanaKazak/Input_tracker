@@ -1,127 +1,264 @@
 import time
-import openpyxl
+import sys
+import sqlite3
 from pynput.mouse import Listener as MouseListener
 from pynput.keyboard import Listener as KeyboardListener
 from pynput.keyboard import Key
 from inputs import get_gamepad, UnpluggedError
-import sys
-# Initialize Excel workbook and worksheet
-workbook = openpyxl.Workbook()
-worksheet = workbook.active
-worksheet.title = "InputData"
-worksheet.append(["Time", "Event Type", "X", "Y", "Button/Key"])
-input_count = 0
-start_time = time.time()
+import threading
+import tkinter as tk
+from tkinter import ttk
+
+
+# Thread-safe database connection
+# Using a lock to ensure that database writes are thread-safe
+db_lock = threading.Lock()
+
+# Global control flags and config
+mouse_listener = None
+keyboard_listener = None
 is_running = True
 ender_key = Key.f12
 input_delay = 0.1
+cooldown_period = 1  # Cooldown for repeated gamepad inputs
+
+# Input tracking stats
+input_count = 0
+start_time = time.time()
+
+# Timestamps to debounce gamepad inputs
 left_stick_last_moved = 0
 right_stick_last_moved = 0
 left_shoulder_last_moved = 0
 right_shoulder_last_moved = 0
-cooldown_period = 1
+
+# Gamepad tracking flag
 gamepad_tracking = False
+
+def setup_database():
+    conn = sqlite3.connect('input_data.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS input_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT,
+            detail TEXT,
+            timestamp REAL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+
+def record_input(event_type, x, y, action):
+    global input_count
+    input_count += 1
+    current_time = time.time()
+    detail = action if action else f"{x}, {y}"
+
+    with db_lock:
+        with sqlite3.connect("input_data.db", check_same_thread=False) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO input_data (type, detail, timestamp) VALUES (?, ?, ?)",
+                (event_type, detail, current_time)
+            )
+            conn.commit()
+            print(f"Recorded: {event_type} - {detail}")
+
+def show_summary_window():
+    global start_time
+    # Read values from the database
+    conn = sqlite3.connect('input_data.db')
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM input_data WHERE type = 'keyboard'")
+    key_count = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM input_data WHERE type = 'mouse'")
+    mouse_click_count = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM input_data WHERE type = 'gamepad'")
+    gamepad_input_count = cursor.fetchone()[0]
+
+    total_time = time.time() - start_time
+    inputs_per_second = input_count / total_time if total_time > 0 else 0
+    conn.close()
+
+    # Create a summary window using tkinter
+    window = tk.Tk()
+    window.title("Input Tracker Summary")
+
+    # Set the window size and disable resizing
+    window.geometry("400x300")  # Increased size
+    window.resizable(False, False)
+
+    # Center the window on the screen
+    window.eval('tk::PlaceWindow . center')
+
+    # Display the tracked values
+    summary_text = (
+        f"Keyboard inputs: {key_count}\n"
+        f"Mouse clicks: {mouse_click_count}\n"
+        f"Gamepad inputs: {gamepad_input_count}\n"
+        f"Total time: {total_time:.2f} seconds\n"
+        f"Total inputs: {input_count}\n"
+        f"Inputs per second: {inputs_per_second:.2f}\n"
+    )
+    
+    # Create a label to show the summary
+    label = ttk.Label(window, text=summary_text, font=("Arial", 13), justify="center")
+    label.pack(pady=30, padx=20)
+
+    # Add an OK button to close the window, with more padding
+    ok_button = ttk.Button(window, text="OK", command=window.destroy)
+    ok_button.pack(pady=20, ipadx=20, ipady=10)
+
+    # Start the tkinter main loop
+    window.mainloop()
+
 def stop_listening():
     global is_running
     is_running = False
     global gamepad_tracking
     gamepad_tracking = False
-    mouse_listener.stop()
-    keyboard_listener.stop()
-def record_input(event_type, x, y, action):
+
+    # Stop listeners
+    if mouse_listener is not None:
+        mouse_listener.stop()
+    if keyboard_listener is not None:
+        keyboard_listener.stop()
+
+    # Show summary before exiting
+    show_summary_window()
+
+
+
+def on_mouse_click(x, y, button, pressed):
+    if pressed:
+        record_input("mouse", x, y, f"Mouse {button} Pressed")
+        print(f"Mouse clicked at ({x}, {y}) with {button}")
+
+
+def on_key_press(key):
+    key_type = 'keyboard'
+
+    try:
+        detail = key.char  # this works for normal keys
+        action = f"Key Pressed: {detail}"
+    except AttributeError:
+        detail = str(key)  # fallback for special keys like F12
+        action = f"Special Key Pressed: {detail}"
+
+    print(action)
+    log_input(key_type, detail)
+
+    if key == Key.f12:
+        stop_listening()
+        return False  # stop the keyboard listener
+    
+
+def log_input(event_type, detail):
     global input_count
     input_count += 1
     current_time = time.time()
-    worksheet.append([current_time, event_type, x, y, action])
-def on_mouse_click(x, y, button, pressed):
-    if pressed:
-        event_type = "Mouse Click"
-        action = f"Mouse {button} Pressed"
-        record_input(event_type, x, y, action)
-        print(f"Mouse clicked at ({x}, {y}) with {button}")
-def on_key_press(key):
-    event_type = "Key Press"
-    try:
-        action = f"Key Pressed: {key.char}"
-        print(f"Key pressed: {key.char}")
-    except AttributeError:
-        action = f"Special Key Pressed: {key}"
-        print(f"Special key pressed: {key}")
-        if key == ender_key:  # Use the F12 key to stop
-            end_time = time.time()
-            time_elapsed = end_time - start_time
-            input_rate = input_count / time_elapsed
-            worksheet.append(["Time Elapsed (seconds)", time_elapsed])
-            worksheet.append(["Input Count", input_count])
-            worksheet.append(["Input Rate (inputs/sec)", input_rate])
-            workbook.save("InputData.xlsx")
-            print(f"{key} key was pressed, exiting program.")
-            stop_listening()
-    record_input(event_type, None, None, action)
+
+    with db_lock:
+        with sqlite3.connect("input_data.db", check_same_thread=False) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO input_data (type, detail, timestamp) VALUES (?, ?, ?)",
+                (event_type, detail, current_time)
+            )
+            conn.commit()
+    print(f"Logged: {event_type} - {detail} at {current_time}")
+
+
 def on_gamepad_input(event):
-    global left_stick_last_moved, right_stick_last_moved, left_shoulder_last_moved, right_shoulder_last_moved
+    #Process a single gamepad event.
+    global left_stick_last_moved, right_stick_last_moved
+    global left_shoulder_last_moved, right_shoulder_last_moved
+
     if event.ev_type == "Absolute":
-        if event.code == "ABS_X" or event.code == "ABS_Y":
-            # Left stick moved
-            current_time = time.time()
+        current_time = time.time()
+        if event.code in ("ABS_X", "ABS_Y"):
             if current_time - left_stick_last_moved >= cooldown_period:
-                action = f"Left Stick Moved: {event.code}"
-                print(action)
                 left_stick_last_moved = current_time
+                action = f"Left Stick Moved: {event.code}"
                 record_input("Gamepad Input", None, None, action)
-        elif event.code == "ABS_RX" or event.code == "ABS_RY":
-            # Right stick moved
-            current_time = time.time()
+                print(action)
+        elif event.code in ("ABS_RX", "ABS_RY"):
             if current_time - right_stick_last_moved >= cooldown_period:
-                action = f"Right Stick Moved: {event.code}"
-                print(action)
                 right_stick_last_moved = current_time
+                action = f"Right Stick Moved: {event.code}"
                 record_input("Gamepad Input", None, None, action)
-        elif event.code == "ABS_HAT0X" or event.code == "ABS_HAT0Y":
-            # D-pad input
-            action = f"Gamepad D-pad: {event.code} {'pressed' if event.state == 1 else 'released'}"
-            print(action)
-            record_input("Gamepad Input", None, None, action)
-        elif event.code == "ABS_RZ":
-            current_time = time.time()
-            if current_time - right_shoulder_last_moved >= cooldown_period:
-                action = f"Right Shoulder Moved: {event.code}"
                 print(action)
-                right_shoulder_last_moved = current_time
-                record_input("Gamepad Input", None, None, action)
-        elif event.code == "ABS_Z":
-            current_time = time.time()
+        elif event.code in ("ABS_Z",):
             if current_time - left_shoulder_last_moved >= cooldown_period:
-                action = f"Left Shoulder Moved: {event.code}"
-                print(action)
                 left_shoulder_last_moved = current_time
+                action = f"Left Shoulder Moved: {event.code}"
                 record_input("Gamepad Input", None, None, action)
+                print(action)
+        elif event.code in ("ABS_RZ",):
+            if current_time - right_shoulder_last_moved >= cooldown_period:
+                right_shoulder_last_moved = current_time
+                action = f"Right Shoulder Moved: {event.code}"
+                record_input("Gamepad Input", None, None, action)
+                print(action)
+        elif event.code in ("ABS_HAT0X", "ABS_HAT0Y"):
+            action = f"Gamepad D-pad: {event.code} {'pressed' if event.state == 1 else 'released'}"
+            record_input("Gamepad Input", None, None, action)
+            print(action)
     elif event.ev_type == "Key":
         action = f"Gamepad Button: {event.code} {'pressed' if event.state == 1 else 'released'}"
-        print(action)
         record_input("Gamepad Input", None, None, action)
-mouse_listener = MouseListener(on_click=on_mouse_click)
-keyboard_listener = KeyboardListener(on_press=on_key_press)
-mouse_listener.start()
-keyboard_listener.start()
-try:
-    events = get_gamepad()
-    gamepad_tracking = True  # Set the flag if a gamepad is found
-except UnpluggedError:
-    print("No gamepad found. Gamepad tracking is disabled.")
-while is_running:
-    # Check if a gamepad is found at regular intervals
+        print(action)
+
+
+def main():
+    setup_database()
+    global mouse_listener, keyboard_listener
+    # Start listeners
+    mouse_listener = MouseListener(on_click=on_mouse_click)
+    keyboard_listener = KeyboardListener(on_press=on_key_press)
+    mouse_listener.start()
+    keyboard_listener.start()
+
+    # Gamepad loop
+    global gamepad_tracking
     try:
-        events = get_gamepad()
-        gamepad_tracking = True  # Set the flag if a gamepad is found
+        get_gamepad()
+        gamepad_tracking = True
     except UnpluggedError:
-        gamepad_tracking = False  # Disable gamepad tracking if no gamepad is found
-    if gamepad_tracking:
-        try:
-            events = get_gamepad()
-            for event in events:
-                on_gamepad_input(event)
-        except UnpluggedError:
-            print("Gamepad disconnected. Disabling gamepad tracking.")
-            gamepad_tracking = False
-sys.exit(0)
+        print("No gamepad found. Gamepad tracking is disabled.")
+
+    try:
+        while is_running:
+            if gamepad_tracking:
+                try:
+                    events = get_gamepad()
+                    for event in events:
+                        on_gamepad_input(event)
+                except UnpluggedError:
+                    print("Gamepad disconnected. Disabling gamepad tracking.")
+                    gamepad_tracking = False
+            else:
+                try:
+                    get_gamepad()
+                    gamepad_tracking = True
+                except UnpluggedError:
+                    time.sleep(2)
+            time.sleep(input_delay)
+    except KeyboardInterrupt:
+        stop_listening()
+
+    # Wait for listeners to finish before exiting
+    if mouse_listener is not None:
+        mouse_listener.join()
+    if keyboard_listener is not None:
+        keyboard_listener.join()
+
+    # Do not call sys.exit(0) here; let the script end naturally
+
+if __name__ == "__main__":
+    main()
