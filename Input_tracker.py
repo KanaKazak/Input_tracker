@@ -7,7 +7,8 @@ from inputs import get_gamepad, UnpluggedError
 import threading
 import tkinter as tk
 from tkinter import ttk
-
+from playsound import playsound
+import os
 
 # Thread-safe database connection
 # Using a lock to ensure that database writes are thread-safe
@@ -128,6 +129,8 @@ def show_summary_window():
 # Stop listening for inputs and show the summary window
 # This function stops the input listeners and shows a summary of the tracked inputs
 def stop_listening():
+    # Play end sound
+    playsound(os.path.join(os.path.dirname(__file__), 'D:/Audiofiles/end.mp3'))
     global is_running
     is_running = False
     global gamepad_tracking
@@ -225,6 +228,8 @@ def on_gamepad_input(event):
 # Main function to set up the database and start input listeners
 # This function initializes the database, starts the mouse and keyboard listeners, and handles gamepad input
 def main():
+    # Play start sound
+    playsound(os.path.join(os.path.dirname(__file__), 'D:/Audiofiles/start.mp3'))
     setup_database()
     global mouse_listener, keyboard_listener
     # Start listeners
